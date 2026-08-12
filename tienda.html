@@ -734,7 +734,10 @@
             if (mE === 'Envio' && !d) return;
             if(!window.estaElLocalAbierto()) alert("El local se encuentra cerrado. El pedido quedará en cola.");
             
-            document.getElementById('btn-comprar').disabled = true;
+            const btnComprar = document.getElementById('btn-comprar');
+            const textoOriginalComprar = btnComprar.textContent;
+            btnComprar.disabled = true;
+            btnComprar.textContent = 'Procesando…';
             try {
                 const iM = []; const cV = {}; let subtotalBruto = 0;
                 carrito.forEach(i => { const u=i.idProd+'_'+i.idVar; if(!cV[u]) cV[u]={...i,c:0}; cV[u].c++; subtotalBruto += i.precio; });
@@ -762,27 +765,11 @@
                 
                 ultimoPedidoConf = nuevoPedido; 
 
-                for (let item of iM) {
-                    if (!item.isPack) {
-                        const prodLocal = productos.find(x => x.id === item.idProd);
-                        if (prodLocal && prodLocal.variantes[item.idVar]) {
-                            prodLocal.variantes[item.idVar].stock = Math.max(0, prodLocal.variantes[item.idVar].stock - item.cantidad);
-                            await setDoc(doc(db, "productos", item.idProd), { variantes: prodLocal.variantes }, { merge: true });
-                        }
-                    } else {
-                        const pkId = item.idProd.replace('pack_', '');
-                        const pkLocal = packs.find(x => x.id === pkId);
-                        if (pkLocal) {
-                            for (let pkItem of pkLocal.items) {
-                                const prodLocal = productos.find(x => x.id === pkItem.idProd);
-                                if (prodLocal && prodLocal.variantes[pkItem.idVar]) {
-                                    prodLocal.variantes[pkItem.idVar].stock = Math.max(0, prodLocal.variantes[pkItem.idVar].stock - (pkItem.cantidad * item.cantidad));
-                                    await setDoc(doc(db, "productos", pkItem.idProd), { variantes: prodLocal.variantes }, { merge: true });
-                                }
-                            }
-                        }
-                    }
-                }
+                // IMPORTANTE:
+                // La tienda pública NO modifica stock directamente.
+                // El panel administrador recibe el pedido y descuenta el stock
+                // mediante una transacción de Firestore, evitando escrituras
+                // anónimas sobre productos y dobles descuentos.
 
                 window.renderizarCatalogoYStock();
                 
@@ -795,7 +782,10 @@
             } catch (e) { 
                 console.error(e); 
                 alert("Hubo un error al procesar el pedido.");
-            } finally { document.getElementById('btn-comprar').disabled = false; }
+            } finally {
+                btnComprar.disabled = false;
+                btnComprar.textContent = textoOriginalComprar;
+            }
         };
 
         window.onload = cargarDatosBD;
