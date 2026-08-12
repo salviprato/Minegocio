@@ -477,6 +477,9 @@
         window.cambiarVarianteUI = (id, sel) => {
             const o = sel.options[sel.selectedIndex]; const stk = parseInt(o.getAttribute('data-stock'));
             const isOferta = o.getAttribute('data-esoferta') === 'true'; const pFinal = o.getAttribute('data-precio'); const pOrig = o.getAttribute('data-precio-orig');
+            const imagenVariante = o.getAttribute('data-imagen') || '';
+            const imgEl = document.getElementById(`img-prod-${id}`);
+            if(imgEl && imagenVariante) imgEl.src = imagenVariante;
             let priceHtml = isOferta ? `<span style="text-decoration:line-through; color:var(--text-dark); font-size:0.85rem; margin-right:8px;">$${window.formatearNum(pOrig)}</span>$${window.formatearNum(pFinal)}` : `$${window.formatearNum(pFinal)}`;
             document.getElementById(`precio-display-${id}`).innerHTML = priceHtml;
             const badge = document.getElementById(`badge-oferta-${id}`); if(badge) badge.style.display = isOferta ? 'inline-block' : 'none';
@@ -492,17 +495,18 @@
             if(fProds.length === 0 && fPacks.length === 0) { c.innerHTML = '<p style="color:var(--text-muted)">No se encontraron productos.</p>'; return; }
 
             fProds.forEach(p => {
-                const img = p.imagen || 'https://via.placeholder.com/300x200?text=IMG'; let vE = Object.entries(p.variantes || {}); 
+                let vE = Object.entries(p.variantes || {}); 
                 if (categoriaActiva === 'Ofertas') vE = vE.filter(([id, v]) => v.precioOferta && window.verificarVigenciaOferta(v.fechaLimiteOferta));
                 if(vE.length === 0) return;
                 
-                let sO = ''; vE.forEach(([id, v]) => { let esOfertaVar = v.precioOferta && window.verificarVigenciaOferta(v.fechaLimiteOferta); let pr = esOfertaVar ? v.precioOferta : v.precio; sO += `<option value="${id}" data-precio="${pr}" data-precio-orig="${v.precio}" data-esoferta="${esOfertaVar ? 'true' : 'false'}" data-stock="${v.stock}">${v.detalle}</option>`; }); 
+                let sO = ''; vE.forEach(([id, v]) => { let esOfertaVar = v.precioOferta && window.verificarVigenciaOferta(v.fechaLimiteOferta); let pr = esOfertaVar ? v.precioOferta : v.precio; let imgVar = v.imagen || ''; sO += `<option value="${id}" data-precio="${pr}" data-precio-orig="${v.precio}" data-esoferta="${esOfertaVar ? 'true' : 'false'}" data-stock="${v.stock}" data-imagen="${imgVar.replace(/"/g,'&quot;')}">${v.detalle}</option>`; }); 
+                const imgInicial = vE[0][1].imagen || 'https://via.placeholder.com/300x200?text=IMG';
                 let esOfertaInicial = vE[0][1].precioOferta && window.verificarVigenciaOferta(vE[0][1].fechaLimiteOferta);
                 let badgeHTML = `<div id="badge-oferta-${p.id}" class="badge-promo" style="display: ${esOfertaInicial ? 'inline-block' : 'none'};">Oferta</div>`;
                 let prDisplay = esOfertaInicial ? vE[0][1].precioOferta : vE[0][1].precio; let pOrig = vE[0][1].precio;
                 let priceHtml = esOfertaInicial ? `<span style="text-decoration:line-through; color:var(--text-dark); font-size:0.85rem; margin-right:8px;">$${window.formatearNum(pOrig)}</span>$${window.formatearNum(prDisplay)}` : `$${window.formatearNum(prDisplay)}`;
 
-                c.innerHTML += `<div class="card">${badgeHTML}<img src="${img}" class="card-img" onerror="this.src='https://via.placeholder.com/300x200?text=X'"><h3>${p.nombre}</h3><select id="sel-var-${p.id}" class="select-variante" onchange="window.cambiarVarianteUI('${p.id}', this)">${sO}</select><p id="precio-display-${p.id}" style="font-size:1.3rem; font-weight:600; margin:0 0 5px 0; color:var(--primary);">${priceHtml}</p><p id="stock-disp-${p.id}" style="font-size:0.7rem; color:var(--text-muted); margin-bottom:20px; text-transform:uppercase; letter-spacing:1px;">Disponibilidad: ${window.formatearNum(vE[0][1].stock)}</p><div class="acciones-compra"><input type="number" id="cant-${p.id}" class="input-cantidad" value="1" min="1" max="${vE[0][1].stock}" ${vE[0][1].stock===0?'disabled':''}><button id="btn-add-${p.id}" style="flex-grow:1;" onclick="window.agregarAlCarrito('${p.id}')" ${vE[0][1].stock===0?'disabled':''}>${vE[0][1].stock===0?'Agotado':'Agregar'}</button></div></div>`;
+                c.innerHTML += `<div class="card">${badgeHTML}<img id="img-prod-${p.id}" src="${imgInicial}" class="card-img" onerror="this.src='https://via.placeholder.com/300x200?text=X'"><h3>${p.nombre}</h3><select id="sel-var-${p.id}" class="select-variante" onchange="window.cambiarVarianteUI('${p.id}', this)">${sO}</select><p id="precio-display-${p.id}" style="font-size:1.3rem; font-weight:600; margin:0 0 5px 0; color:var(--primary);">${priceHtml}</p><p id="stock-disp-${p.id}" style="font-size:0.7rem; color:var(--text-muted); margin-bottom:20px; text-transform:uppercase; letter-spacing:1px;">Disponibilidad: ${window.formatearNum(vE[0][1].stock)}</p><div class="acciones-compra"><input type="number" id="cant-${p.id}" class="input-cantidad" value="1" min="1" max="${vE[0][1].stock}" ${vE[0][1].stock===0?'disabled':''}><button id="btn-add-${p.id}" style="flex-grow:1;" onclick="window.agregarAlCarrito('${p.id}')" ${vE[0][1].stock===0?'disabled':''}>${vE[0][1].stock===0?'Agotado':'Agregar'}</button></div></div>`;
             });
 
             fPacks.forEach(pk => {
