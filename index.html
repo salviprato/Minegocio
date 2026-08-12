@@ -684,8 +684,8 @@
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
                 <div class="modulo-oscuro">
                     <div class="modulo-body">
-                        <h4 style="margin: 0 0 15px 0; color: var(--primary); font-size: 0.85rem; text-transform: uppercase;">Contacto y Logística</h4>
-                        <div class="form-group"><label>URL Logo</label><input type="text" autocomplete="off" id="conf-logo"><input type="file" accept="image/*" onchange="window.cargarImagenArchivo(this, 'conf-logo', 'preview-conf-logo')" style="margin-top:8px;"><img id="preview-conf-logo" class="preview-img-admin"></div>
+                        <h4 style="margin: 0 0 15px 0; color: var(--primary); font-size: 0.85rem; text-transform: uppercase;">Contacto y Logística</h4><p style="margin:0 0 15px 0; font-size:0.78rem; color:var(--text-muted); line-height:1.5;">Las imágenes se guardan como URLs externas. Este panel no utiliza Firebase Storage.</p>
+                        <div class="form-group"><label>URL Logo</label><input type="url" autocomplete="off" id="conf-logo" placeholder="https://..." oninput="window.previsualizarImagenURL(this, 'preview-conf-logo')"><img id="preview-conf-logo" class="preview-img-admin" alt="Vista previa del logo"></div>
                         <div class="form-group"><label>Teléfono (WhatsApp)</label><input type="text" autocomplete="off" id="conf-tel"></div>
                         <div class="dark-input-group"><div><label>Envíos</label><select id="conf-envio-disp"><option value="si">Habilitado</option><option value="no">Deshabilitado</option></select></div><div><label>Tarifa $</label><input type="number" id="conf-envio-precio"></div></div>
                         <hr>
@@ -744,7 +744,7 @@
         <div class="modal-content">
             <h3>Configurar Pack Promocional</h3>
             <div class="form-group"><label>Nombre del Pack</label><input type="text" autocomplete="off" id="pack-nombre"></div>
-            <div class="form-group"><label>URL Imagen</label><input type="text" autocomplete="off" id="pack-imagen"><input type="file" accept="image/*" onchange="window.cargarImagenArchivo(this, 'pack-imagen', 'preview-pack-imagen')" style="margin-top:8px;"><img id="preview-pack-imagen" class="preview-img-admin"></div>
+            <div class="form-group"><label>URL Imagen</label><input type="url" autocomplete="off" id="pack-imagen" placeholder="https://..." oninput="window.previsualizarImagenURL(this, 'preview-pack-imagen')"><img id="preview-pack-imagen" class="preview-img-admin" alt="Vista previa del pack"></div>
             <div class="form-group"><label>Precio de Venta ($)</label><input type="number" id="pack-precio"></div>
             <hr>
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;"><label style="font-weight: 600; font-size: 0.8rem; text-transform: uppercase;">Componentes</label><button type="button" class="secondary" onclick="window.agregarFilaItemPack()">Añadir</button></div>
@@ -809,7 +809,6 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
         import { getFirestore, collection, getDocs, getDoc, doc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, where, orderBy, limit, startAfter, runTransaction, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut, setPersistence, inMemoryPersistence } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-        import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-storage.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyDJLS0xvRkdEMGQUPy3a8y76beb0LVukpw",
@@ -823,7 +822,6 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
         const auth = getAuth(app);
-        const storage = getStorage(app);
 
         // Persistencia en memoria sin bloquear la carga del panel.
         // Antes estaba con await + signOut al inicio y podía dejar la pantalla trabada en el loader.
@@ -1054,29 +1052,47 @@
             });
         };
 
-        window.cargarImagenArchivo = async (input, idCampo, idPreview) => {
-            const file = input.files && input.files[0];
-            if(!file) return;
-            const estado = input.parentElement?.querySelector('.field-status') || (()=>{ const s=document.createElement('span'); s.className='field-status'; input.parentElement?.appendChild(s); return s; })();
-            try {
-                if(!negocioIdActual || !auth.currentUser) throw new Error('Debés iniciar sesión antes de cargar archivos.');
-                if(!file.type.startsWith('image/')) throw new Error('Seleccioná una imagen válida.');
-                if(file.size > 8 * 1024 * 1024) throw new Error('La imagen supera 8 MB.');
-                const ext=(file.name.split('.').pop()||'jpg').replace(/[^a-z0-9]/gi,'').toLowerCase();
-                const ruta=`negocios/${negocioIdActual}/imagenes/${Date.now()}_${genIdDB()}.${ext}`;
-                const ref=storageRef(storage,ruta);
-                const task=uploadBytesResumable(ref,file,{contentType:file.type,customMetadata:{negocioId:negocioIdActual,uid:auth.currentUser.uid}});
-                estado.textContent='Subiendo 0%…'; input.disabled=true;
-                const url = await new Promise((resolve,reject)=>{
-                    task.on('state_changed', snap=>{ const pct=Math.round(snap.bytesTransferred/snap.totalBytes*100); estado.textContent=`Subiendo ${pct}%…`; }, reject, async()=>resolve(await getDownloadURL(task.snapshot.ref)));
-                });
-                const campo=document.getElementById(idCampo); if(campo) campo.value=url;
-                const prev=document.getElementById(idPreview); if(prev){prev.src=url;prev.style.display='block';}
-                estado.textContent='Imagen cargada';
-                await auditar('imagen_subida','storage',ruta,{nombre:file.name,tamano:file.size,tipo:file.type});
-            } catch(e) { estado.textContent='Error al cargar'; window.mostrarAlertaUI(e.message || 'No se pudo cargar la imagen.'); input.value=''; }
-            finally { input.disabled=false; }
+        const esUrlImagenValida = (valor, requerido = false) => {
+            const url = String(valor || '').trim();
+            if(!url) {
+                if(requerido) throw new Error('La URL de imagen es obligatoria.');
+                return '';
+            }
+            let parsed;
+            try { parsed = new URL(url); }
+            catch { throw new Error('La imagen debe tener una URL válida.'); }
+            if(!['http:', 'https:'].includes(parsed.protocol)) {
+                throw new Error('La URL de imagen debe comenzar con http:// o https://.');
+            }
+            return url;
         };
+
+        window.previsualizarImagenURL = (input, idPreview) => {
+            const prev = document.getElementById(idPreview);
+            if(!prev) return;
+            const url = String(input?.value || '').trim();
+            if(!url) {
+                prev.removeAttribute('src');
+                prev.style.display = 'none';
+                return;
+            }
+            try {
+                const parsed = new URL(url);
+                if(!['http:', 'https:'].includes(parsed.protocol)) throw new Error();
+                prev.src = url;
+                prev.style.display = 'block';
+                prev.onerror = () => {
+                    prev.style.display = 'none';
+                };
+                prev.onload = () => {
+                    prev.style.display = 'block';
+                };
+            } catch {
+                prev.removeAttribute('src');
+                prev.style.display = 'none';
+            }
+        };
+
 
         const registrarFechaStock = (prod, vId, motivo = 'Modificación de stock') => {
             if(!prod || !prod.variantes || !prod.variantes[vId]) return;
@@ -1758,7 +1774,7 @@
                 <div style="min-width:170px;"><span class="mini-label">Subcategoría</span><input type="text" class="v-subcategoria" list="subcats-${safeId}" value="${escaparHtml(subcategoria)}" placeholder="Sin subcategoría / buscar…" autocomplete="off"><datalist id="subcats-${safeId}">${(subcategoriasGlobales[categoria]||[]).map(s=>`<option value="${escaparHtml(s)}"></option>`).join('')}</datalist></div>
                 <div style="min-width:130px;"><span class="mini-label">Valor Venta $</span><input type="number" class="v-precio" value="${escaparHtml(precio)}" min="0" step="0.01"></div>
                 <div style="min-width:120px;"><span class="mini-label">Stock Actual</span><input type="number" class="v-stock" value="${escaparHtml(stock)}" min="0" ${bloqueado ? 'disabled' : ''}></div>
-                <div style="flex:2; min-width:210px;"><span class="mini-label">Imagen propia de la variante</span><input type="text" class="v-imagen" id="v-img-${safeId}" value="${escaparHtml(imagen)}" placeholder="https://... o cargá un archivo"><input type="file" accept="image/*" onchange="window.cargarImagenArchivo(this, 'v-img-${safeId}', 'v-prev-${safeId}')" style="margin-top:6px;"><img id="v-prev-${safeId}" class="preview-img-admin" src="${escaparHtml(imagen)}" style="${imagen ? 'display:block;' : ''}"></div>
+                <div style="flex:2; min-width:210px;"><span class="mini-label">Imagen propia de la variante (URL)</span><input type="url" class="v-imagen" id="v-img-${safeId}" value="${escaparHtml(imagen)}" placeholder="https://..." oninput="window.previsualizarImagenURL(this, 'v-prev-${safeId}')"><img id="v-prev-${safeId}" class="preview-img-admin" src="${escaparHtml(imagen)}" style="${imagen ? 'display:block;' : ''}" alt="Vista previa"></div>
                 <button type="button" class="danger" style="margin-bottom:2px; padding:6px 10px;" onclick="this.parentElement.remove()">X</button>`;
             cont.appendChild(div);
         };
@@ -1799,7 +1815,7 @@
                         const detalle=validarTexto(f.querySelector('.v-detalle').value,'Nombre de variante',100,true);
                         const precio=validarNumero(f.querySelector('.v-precio').value,`Precio de ${detalle}`,{min:0,max:999999999});
                         const subcategoria=String(f.querySelector('.v-subcategoria').value||'').trim();
-                        const imagen=String(f.querySelector('.v-imagen').value||'').trim(); if(!imagen) throw new Error(`La variante "${detalle}" necesita una imagen propia.`);
+                        const imagen=esUrlImagenValida(f.querySelector('.v-imagen').value, true);
                         if(subcategoria && !(subcategoriasGlobales[categoriaProd]||[]).includes(subcategoria)) throw new Error(`La subcategoría de "${detalle}" no pertenece a ${categoriaProd}.`);
                         const sInp=f.querySelector('.v-stock'); const anterior=id?productos.find(p=>p.id===id)?.variantes?.[vId]:null;
                         const stock=anterior?(Number(anterior.stock)||0):validarNumero(sInp.value,`Stock de ${detalle}`,{min:0,max:999999999});
