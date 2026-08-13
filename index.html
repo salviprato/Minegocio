@@ -808,7 +808,7 @@
         // ===== INTEGRACIÓN FIREBASE ACTUALIZADA (MULTI-TENANT) =====
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
         import { getFirestore, collection, getDocs, getDoc, doc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, where, orderBy, limit, startAfter, runTransaction, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
-       import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut, setPersistence, inMemoryPersistence } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+       import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyDJLS0xvRkdEMGQUPy3a8y76beb0LVukpw",
@@ -823,9 +823,9 @@
         const db = getFirestore(app);
         const auth = getAuth(app);
 
-        // Persistencia en memoria sin bloquear la carga del panel.
+        // Persistencia local para mantener la sesión iniciada sin bloquear la carga del panel.
         // Antes estaba con await + signOut al inicio y podía dejar la pantalla trabada en el loader.
-        setPersistence(auth, inMemoryPersistence).catch(error => {
+        setPersistence(auth, browserLocalPersistence).catch(error => {
             console.error('No se pudo configurar la persistencia de sesión:', error);
         });
 
@@ -987,7 +987,7 @@
             pedirConfirmacion(String(mensaje || '¿Confirmar acción?'));
             return false;
         };
-        const normalizarEstadoPedido = (p) => {
+        const normalizarEstadoPedido = (p = {}) => {
             const estado = p.estadoPedido || (p.estadoEntrega ? 'entregado' : 'pendiente');
             return estado === 'confirmado' ? 'pendiente' : estado;
         };
@@ -1156,6 +1156,225 @@
             } catch(e){ return {ok:false,errores:e.stockErrors || [e.message || 'No se pudo actualizar el stock.']}; }
         };
 
+
+        const sumarDemanda = (mapa, pId, vId, cant, nombre) => {
+            const productoId = String(pId || '').trim();
+            const varianteId = String(vId || '').trim();
+            const cantidad = Number(cant) || 0;
+            if(!productoId || !varianteId || cantidad <= 0) return;
+            const k = `${productoId}|${varianteId}`;
+            const actual = mapa.get(k) || { pId: productoId, vId: varianteId, cant: 0, nombre: nombre || 'Producto' };
+            actual.cant += cantidad;
+            mapa.set(k, actual);
+        };
+
+        const construirDemandasDesdeItemsTransaccion = async (tx, items = []) => {
+            const demandas = new Map();
+
+            for(const item of items || []) {
+                if(!item || !item.isPack) {
+                    sumarDemanda(demandas, item.idProd, item.idVar, item.cantidad, item.nombre || 'Producto');
+                    continue;
+                }
+
+                const packId = String(item.idProd || '').replace('pack_', '');
+                if(!packId) throw new Error(`Pack inválido en el pedido.`);
+
+                const packSnap = await tx.get(doc(db, 'packs', packId));
+                if(!packSnap.exists()) throw new Error(`No se encontró el pack ${item.nombre || packId}.`);
+
+                const packData = packSnap.data();
+                if(packData.negocioId !== negocioIdActual) throw new Error(`El pack ${item.nombre || packId} no pertenece a este negocio.`);
+
+                for(const comp of packData.items || []) {
+                    sumarDemanda(
+                        demandas,
+                        comp.idProd,
+                        comp.idVar,
+                        (Number(comp.cantidad) || 0) * (Number(item.cantidad) || 0),
+                        item.nombre || packData.nombre || 'Pack'
+                    );
+                }
+            }
+
+            return demandas;
+        };
+
+        const leerProductosDemandadosTransaccion = async (tx, demandas) => {
+            const productoIds = [...new Set([...demandas.values()].map(d => d.pId))];
+            const registros = new Map();
+
+            for(const pId of productoIds) {
+                const ref = doc(db, 'productos', pId);
+                const snap = await tx.get(ref);
+                registros.set(pId, { ref, snap, data: snap.exists() ? snap.data() : null });
+            }
+
+            return registros;
+        };
+
+        const validarYAplicarDemandasTransaccion = (tx, demandas, registros, factor, motivo) => {
+            const errores = [];
+
+            for(const d of demandas.values()) {
+                const reg = registros.get(d.pId);
+                const variante = reg?.data?.variantes?.[d.vId];
+                const stockActual = Number(variante?.stock) || 0;
+
+                if(!reg || !reg.snap.exists() || !variante) {
+                    errores.push(`${d.nombre}: variante no encontrada.`);
+                } else if(factor < 0 && stockActual < d.cant) {
+                    errores.push(`${d.nombre}: solicitado ${d.cant}, disponible ${stockActual}.`);
+                }
+            }
+
+            if(errores.length) {
+                const error = new Error(errores.join(' | '));
+                error.stockErrors = errores;
+                throw error;
+            }
+
+            for(const [pId, reg] of registros.entries()) {
+                let cambio = false;
+                const data = reg.data;
+
+                for(const d of demandas.values()) {
+                    if(d.pId !== pId) continue;
+
+                    const actual = Number(data.variantes[d.vId].stock) || 0;
+                    data.variantes[d.vId].stock = Math.max(0, actual + (factor * d.cant));
+                    data.variantes[d.vId].ultimaModificacionStock = new Date().toISOString();
+                    data.variantes[d.vId].motivoUltimaModificacionStock = motivo;
+                    cambio = true;
+                }
+
+                if(cambio) {
+                    data.updatedAt = serverTimestamp();
+                    data.updatedBy = actorActual();
+                    tx.set(reg.ref, data);
+                }
+            }
+        };
+
+        window.procesarPedidoWebPendiente = async (idDoc) => {
+            try {
+                let estadoFinal = { ok: true, errores: [] };
+
+                await runTransaction(db, async (tx) => {
+                    const pedidoRef = doc(db, 'pedidos', idDoc);
+                    const pedidoSnap = await tx.get(pedidoRef);
+
+                    if(!pedidoSnap.exists()) {
+                        estadoFinal = { ok: false, errores: ['El pedido ya no existe.'] };
+                        return;
+                    }
+
+                    const pedido = pedidoSnap.data();
+
+                    if(pedido.negocioId !== negocioIdActual) {
+                        estadoFinal = { ok: false, errores: ['El pedido no pertenece a este negocio.'] };
+                        return;
+                    }
+
+                    const estado = normalizarEstadoPedido(pedido);
+                    if(pedido.stockDescontado === true || estado === 'cancelado' || estado === 'entregado') {
+                        estadoFinal = { ok: true, errores: [] };
+                        return;
+                    }
+
+                    if(estado === 'stock_error') {
+                        estadoFinal = { ok: false, errores: [pedido.alertaStock || 'Pedido marcado con falta de stock.'] };
+                        return;
+                    }
+
+                    const demandas = await construirDemandasDesdeItemsTransaccion(tx, pedido.items || []);
+                    const registros = await leerProductosDemandadosTransaccion(tx, demandas);
+
+                    try {
+                        validarYAplicarDemandasTransaccion(
+                            tx,
+                            demandas,
+                            registros,
+                            -1,
+                            `Pedido web #${pedido.idCorto || idDoc}`
+                        );
+
+                        tx.update(pedidoRef, {
+                            stockDescontado: true,
+                            estadoPedido: estado === 'confirmado' ? 'pendiente' : estado,
+                            alertaStock: '',
+                            updatedAt: serverTimestamp(),
+                            updatedBy: actorActual()
+                        });
+
+                        const ar = doc(collection(db, 'auditoria'));
+                        tx.set(ar, {
+                            negocioId: negocioIdActual,
+                            accion: 'pedido_stock_descontado',
+                            entidad: 'pedido',
+                            entidadId: idDoc,
+                            detalle: {
+                                codigo: pedido.idCorto || '',
+                                demandas: [...demandas.values()]
+                            },
+                            actor: actorActual(),
+                            fecha: serverTimestamp()
+                        });
+                    } catch(errorStock) {
+                        const errores = errorStock.stockErrors || [errorStock.message || 'Stock insuficiente.'];
+                        estadoFinal = { ok: false, errores };
+
+                        tx.update(pedidoRef, {
+                            stockDescontado: false,
+                            estadoPedido: 'stock_error',
+                            alertaStock: errores.join(' | '),
+                            updatedAt: serverTimestamp(),
+                            updatedBy: actorActual()
+                        });
+
+                        const ar = doc(collection(db, 'auditoria'));
+                        tx.set(ar, {
+                            negocioId: negocioIdActual,
+                            accion: 'pedido_stock_insuficiente',
+                            entidad: 'pedido',
+                            entidadId: idDoc,
+                            detalle: {
+                                codigo: pedido.idCorto || '',
+                                errores
+                            },
+                            actor: actorActual(),
+                            fecha: serverTimestamp()
+                        });
+                    }
+                });
+
+                return estadoFinal;
+            } catch(e) {
+                console.error('Error procesando pedido:', e);
+                return { ok: false, errores: [e.message || 'No se pudo procesar el pedido.'] };
+            }
+        };
+
+        const registrarIngresoPedidoTransaccion = (tx, idDoc, pedido, tipo = 'pago') => {
+            const ingresoRef = doc(db, 'ingresos', `pedido_pago_${idDoc}`);
+            const total = Number(pedido.total) || 0;
+
+            tx.set(ingresoRef, {
+                fecha: new Date(),
+                tipo,
+                detalle: tipo === 'pago_auto'
+                    ? `Liquidación #${pedido.idCorto || idDoc} Autocobro`
+                    : `Liquidación #${pedido.idCorto || idDoc}`,
+                efectivo: pedido.metodoPago === 'Efectivo' ? total : 0,
+                transferencia: pedido.metodoPago !== 'Efectivo' ? total : 0,
+                pedidoId: idDoc,
+                idCorto: pedido.idCorto || '',
+                negocioId: negocioIdActual,
+                createdAt: serverTimestamp(),
+                createdBy: actorActual()
+            }, { merge: false });
+        };
+
         window.actualizarNotificaciones = () => {
             const pedidosPend = pedidosGlobales.filter(p => !p.estadoEntrega && normalizarEstadoPedido(p) !== 'cancelado').length;
             const pagosPend = pedidosGlobales.filter(p => !p.estadoPago && normalizarEstadoPedido(p) !== 'cancelado').length;
@@ -1263,7 +1482,7 @@
                         // 2. VERIFICACIÓN CRÍTICA: ¿Ya es administrador aprobado?
                         if (datosUsuario.rol === "admin") {
                             negocioIdActual = datosUsuario.negocioId;
-                            document.getElementById('nombre-negocio-display').textContent = `(ID: ${negocioIdActual})`;
+                            document.getElementById('nombre-negocio-display').textContent = datosUsuario.nombreNegocio ? `${datosUsuario.nombreNegocio} · ID: ${negocioIdActual}` : `(ID: ${negocioIdActual})`;
                             
                             document.getElementById('login-container').classList.add('hidden');
                             document.getElementById('vista-dueno').classList.remove('hidden');
@@ -1380,17 +1599,17 @@
                 // Esto evita que quede un negocio creado sin usuario asociado.
                 await setDoc(doc(db, "usuarios", user.uid), {
                     email: email,
+                    nombreNegocio: nombreNegocio,
                     negocioId: nuevoNegocioId,
                     rol: "pendiente",
-                    creadoEl: new Date()
+                    creadoEl: new Date(),
+                    createdAt: serverTimestamp(),
+                    updatedAt: serverTimestamp()
                 });
 
-                // 3. Crear el negocio y guardar el UID dueño.
-                await setDoc(doc(db, "negocios", nuevoNegocioId), {
-                    nombre: nombreNegocio,
-                    creadoEl: new Date(),
-                    ownerUid: user.uid
-                });
+                // No se crea la colección "negocios" desde el navegador:
+                // las reglas actuales sólo necesitan usuarios/{uid}.negocioId y rol.
+                // Cuando apruebes al usuario, cambiá rol de "pendiente" a "admin".
 
                 alert("¡Registro exitoso! Tu solicitud fue enviada. Podrás ingresar al panel una vez que el administrador central apruebe tu cuenta.");
 
@@ -1542,22 +1761,12 @@
                                 updateDoc(doc(db, 'pedidos', p.idDoc), { estadoPedido: 'pendiente' }).catch(console.error);
                             }
 
-                            // Mantengo tu lógica de descuento automático cuando entra un pedido nuevo.
-                            // Esto se ejecuta con el listener, sin recargar la página.
-                            if (change.type === "added" && !p.stockDescontado) {
-                                const resultadoStock = await window.descontarStockItems(p.items || [], `Pedido web #${p.idCorto || p.idDoc}`);
+                            // Descuento automático atómico.
+                            // Evita doble descuento si el panel está abierto en dos pestañas o dos usuarios administradores.
+                            if (change.type === "added" && !p.stockDescontado && normalizarEstadoPedido(p) !== 'stock_error') {
+                                const resultadoStock = await window.procesarPedidoWebPendiente(p.idDoc);
 
-                                if (resultadoStock.ok) {
-                                    await updateDoc(doc(db, "pedidos", p.idDoc), {
-                                        stockDescontado: true,
-                                        estadoPedido: normalizarEstadoPedido(p)
-                                    });
-                                } else {
-                                    await updateDoc(doc(db, "pedidos", p.idDoc), {
-                                        stockDescontado: false,
-                                        estadoPedido: 'stock_error',
-                                        alertaStock: resultadoStock.errores.join(' | ')
-                                    });
+                                if (!resultadoStock.ok) {
                                     window.mostrarAlertaUI('Pedido #' + (p.idCorto || '') + ' con falta de stock: ' + resultadoStock.errores.join(' / '));
                                 }
                             }
@@ -1871,12 +2080,60 @@
         window.abrirModalPack = () => { document.getElementById('pack-nombre').value = ''; document.getElementById('pack-imagen').value = ''; document.getElementById('pack-precio').value = ''; document.getElementById('contenedor-items-pack').innerHTML = ''; window.agregarFilaItemPack(); document.getElementById('modal-pack').classList.remove('hidden'); };
         window.cerrarModalPack = () => document.getElementById('modal-pack').classList.add('hidden');
         window.guardarPack = async () => {
-            const nombre = document.getElementById('pack-nombre').value.trim(); const imagen = document.getElementById('pack-imagen').value.trim(); const precio = parseFloat(document.getElementById('pack-precio').value) || 0; const rows = document.querySelectorAll('#contenedor-items-pack .variant-row');
-            if(!nombre || precio <= 0 || rows.length === 0) { alert("Escriba un nombre válido, precio e ingrese artículos."); return; }
-            let itemsCombo = []; rows.forEach(r => { const combined = r.querySelector('.pack-item-select').value; const cant = parseInt(r.querySelector('.pack-item-cant').value) || 1; if(combined) { const [pId, vId] = combined.split('|'); const pRef = productos.find(x => x.id === pId); itemsCombo.push({ idProd: pId, idVar: vId, cantidad: cant, nombre: pRef ? pRef.nombre : 'Producto', detalle: pRef && pRef.variantes[vId] ? pRef.variantes[vId].detalle : '' }); } });
-            let pkObj = { id: genIdDB(), nombre, imagen, precio, categoria: 'Packs', items: itemsCombo, negocioId: negocioIdActual }; // <- Inyección
-            await setDoc(doc(db, "packs", pkObj.id), pkObj); packs.push(pkObj);
-            alert("Combo Pack guardado exitosamente."); window.triggerProductos(); window.cerrarModalPack();
+            const btn=document.activeElement?.tagName==='BUTTON'?document.activeElement:null;
+            return conEstadoBoton(btn,'Guardando pack…',async()=>{
+                try {
+                    const nombre = validarTexto(document.getElementById('pack-nombre').value, 'Nombre del pack', 120, true);
+                    const imagen = esUrlImagenValida(document.getElementById('pack-imagen').value, false);
+                    const precio = validarNumero(document.getElementById('pack-precio').value, 'Precio del pack', {min:0.01, max:999999999});
+                    const rows = [...document.querySelectorAll('#contenedor-items-pack .variant-row')];
+
+                    if(rows.length === 0) throw new Error('El pack debe tener al menos un componente.');
+
+                    const itemsCombo = [];
+                    rows.forEach(r => {
+                        const combined = r.querySelector('.pack-item-select')?.value || '';
+                        const cant = parseInt(r.querySelector('.pack-item-cant')?.value) || 1;
+                        if(!combined) return;
+                        const [pId, vId] = combined.split('|');
+                        const pRef = productos.find(x => x.id === pId);
+                        if(!pRef || !pRef.variantes || !pRef.variantes[vId]) return;
+                        itemsCombo.push({
+                            idProd: pId,
+                            idVar: vId,
+                            cantidad: Math.max(1, cant),
+                            nombre: pRef.nombre,
+                            detalle: pRef.variantes[vId].detalle || ''
+                        });
+                    });
+
+                    if(itemsCombo.length === 0) throw new Error('Seleccioná componentes válidos para el pack.');
+
+                    const pkObj = {
+                        id: genIdDB(),
+                        nombre,
+                        imagen,
+                        precio,
+                        categoria: 'Packs',
+                        items: itemsCombo,
+                        negocioId: negocioIdActual,
+                        createdAt: serverTimestamp(),
+                        createdBy: actorActual(),
+                        updatedAt: serverTimestamp(),
+                        updatedBy: actorActual()
+                    };
+
+                    await setDoc(doc(db, 'packs', pkObj.id), pkObj);
+                    await auditar('pack_guardado','pack',pkObj.id,{nombre,items:itemsCombo.length,precio});
+
+                    window.mostrarAlertaUI('Pack guardado correctamente.');
+                    window.triggerProductos();
+                    window.cerrarModalPack();
+                } catch(e) {
+                    window.mostrarAlertaUI(e.message || 'No se pudo guardar el pack.');
+                    throw e;
+                }
+            });
         };
 
         window.renderizarCatalogoYStock = () => {
@@ -2072,7 +2329,7 @@
                 if (p.alertaStock) it += `<li style="color:#ef4444; font-weight:600;">FALTA STOCK: ${p.alertaStock}</li>`;
                 const estado = normalizarEstadoPedido(p);
                 const bC = isP ? `<button class="danger" style="border: 1px solid #ef4444; color: #ef4444;" onclick="window.cancelarPedido('${p.idDoc}', '${p.telefono || ''}')">Cancelar</button>` : '';
-                const bP = p.estadoPago ? `<span style="color:var(--text-dark); font-size:0.8rem; margin-top:10px;">COBRADO</span>` : `<button class="secondary" onclick="window.marcarPagado('${p.idDoc}', ${p.total || 0}, '${p.metodoPago || ''}', '${p.idCorto || ''}')">Registrar Pago</button>`;
+                const bP = p.estadoPago ? `<span style="color:var(--text-dark); font-size:0.8rem; margin-top:10px;">COBRADO</span>` : `<button class="secondary" onclick="window.marcarPagado('${p.idDoc}')">Registrar Pago</button>`;
                 const bE = isP ? `<button onclick="window.marcarEntregado('${p.idDoc}', '${p.telefono || ''}')">Entregado</button>` : `<span style="color:var(--text-dark); font-size:0.8rem;">FINALIZADO</span>`;
                 return `<div class="pedido-card"><div class="pedido-header"><div><span class="pedido-id">#${p.idCorto || 'S/C'}</span><br><span style="font-size:0.75rem; color:var(--text-dark); text-transform:uppercase;">${p.fecha ? p.fecha.toLocaleString() : ''}</span></div><span style="font-size:1.1rem; font-weight:600; color:var(--primary);">$${window.formatearNum(p.total || 0)}</span></div><p style="margin:0 0 5px 0; color:var(--text-muted); font-size:0.85rem; text-transform:uppercase;">CLIENTE: <span style="color:var(--text-main); font-weight:500;">${obtenerNombreClientePedido(p)} ${p.tipoCliente?`(${p.tipoCliente})`:''}</span></p><p style="margin:0 0 5px 0; color:var(--text-muted); font-size:0.85rem; text-transform:uppercase;">TEL: <a href="https://wa.me/${String(p.telefono || '').replace(/[^0-9]/g,'')}" target="_blank" style="color:var(--primary); font-weight:500; text-decoration:none;">${p.telefono || ''}</a></p><p style="margin:0 0 20px 0; color:var(--text-muted); font-size:0.85rem; text-transform:uppercase;">ENTREGA: <span style="color:var(--text-main); font-weight:500;">${p.metodoEntrega || ''}</span> ${p.direccion && p.direccion!=='Retiro en local'? ' - ' + p.direccion : ''}</p><ul class="pedido-items">${it}</ul><div class="pedido-actions" style="align-items:center;">${bC} ${bP} ${bE}</div></div>`;
             };
@@ -2092,85 +2349,183 @@
             window.triggerPedidos();
         };
         
-        window.marcarPagado = async (idDoc, t, m, c) => { 
+        window.marcarPagado = async (idDoc) => {
             const p = pedidosGlobales.find(x => x.idDoc === idDoc);
-            if(p) { 
-                if(!(await pedirConfirmacion(`¿Registrar como pagado el pedido #${c}?`))) return;
-                await updateDoc(doc(db, "pedidos", idDoc), { estadoPago: true, updatedAt: serverTimestamp(), updatedBy: actorActual() }); await auditar('pedido_pagado','pedido',idDoc,{total:t,metodo:m});
-                p.estadoPago = true; 
-                
-                const yaCobrado = ingresosGlobales.some(ing => ing.detalle.includes(`Liquidación #${c}`));
-                
-                if(!yaCobrado) {
-                    let i = { fecha: new Date(), tipo: 'pago', detalle: `Liquidación #${c}`, efectivo: m==='Efectivo'?t:0, transferencia: m!=='Efectivo'?t:0, negocioId: negocioIdActual };
-                    ingresosGlobales.push(i); 
-                    await addDoc(collection(db, "ingresos"), i); 
-                    window.triggerIngresos(); 
-                }
+            if(!p) return;
+
+            if(!(await pedirConfirmacion(`¿Registrar como pagado el pedido #${p.idCorto || ''}?`))) return;
+
+            const ingresoHistoricoYaExiste = ingresosGlobales.some(ing =>
+                ing.pedidoId === idDoc ||
+                String(ing.detalle || '').includes(`Liquidación #${p.idCorto || idDoc}`)
+            );
+
+            try {
+                await runTransaction(db, async (tx) => {
+                    const pedidoRef = doc(db, 'pedidos', idDoc);
+                    const pedidoSnap = await tx.get(pedidoRef);
+                    if(!pedidoSnap.exists()) throw new Error('El pedido ya no existe.');
+
+                    const pedido = pedidoSnap.data();
+                    if(pedido.negocioId !== negocioIdActual) throw new Error('El pedido no pertenece a este negocio.');
+                    if(normalizarEstadoPedido(pedido) === 'cancelado') throw new Error('No se puede cobrar un pedido cancelado.');
+
+                    const ingresoRef = doc(db, 'ingresos', `pedido_pago_${idDoc}`);
+                    const ingresoSnap = await tx.get(ingresoRef);
+
+                    if(!pedido.estadoPago) {
+                        if(!ingresoSnap.exists() && !ingresoHistoricoYaExiste) registrarIngresoPedidoTransaccion(tx, idDoc, pedido, 'pago');
+
+                        tx.update(pedidoRef, {
+                            estadoPago: true,
+                            updatedAt: serverTimestamp(),
+                            updatedBy: actorActual()
+                        });
+
+                        const ar = doc(collection(db, 'auditoria'));
+                        tx.set(ar, {
+                            negocioId: negocioIdActual,
+                            accion: 'pedido_pagado',
+                            entidad: 'pedido',
+                            entidadId: idDoc,
+                            detalle: { total: Number(pedido.total) || 0, metodo: pedido.metodoPago || '', codigo: pedido.idCorto || '' },
+                            actor: actorActual(),
+                            fecha: serverTimestamp()
+                        });
+                    }
+                });
+
                 window.triggerPedidos();
-            } 
+                window.triggerIngresos();
+            } catch(e) {
+                console.error(e);
+                window.mostrarAlertaUI(e.message || 'No se pudo registrar el pago.');
+            }
         };
 
         window.marcarEntregado = async (idDoc, font) => {
             const p = pedidosGlobales.find(x => x.idDoc === idDoc);
-            if(p) {
-                if(!(await pedirConfirmacion(`¿Marcar como entregado el pedido #${p.idCorto || ''}?`))) return;
-                const yaCobrado = ingresosGlobales.some(ing => ing.detalle.includes(`Liquidación #${p.idCorto}`));
-                
-                if(!p.estadoPago && !yaCobrado) { 
-                    let i = { fecha: new Date(), tipo: 'pago_auto', detalle: `Liquidación #${p.idCorto} Autocobro`, efectivo: p.metodoPago === 'Efectivo' ? p.total : 0, transferencia: p.metodoPago !== 'Efectivo' ? p.total : 0, negocioId: negocioIdActual };
-                    ingresosGlobales.push(i); 
-                    await addDoc(collection(db, "ingresos"), i); 
-                    window.triggerIngresos(); 
-                }
-                
-                await updateDoc(doc(db, "pedidos", idDoc), { estadoEntrega: true, estadoPago: true, estadoPedido: 'entregado', updatedAt: serverTimestamp(), updatedBy: actorActual() }); await auditar('pedido_entregado','pedido',idDoc,{codigo:p.idCorto||''});
-                p.estadoEntrega = true; 
-                p.estadoPago = true;
-                p.estadoPedido = 'entregado'; 
+            if(!p) return;
+
+            if(!(await pedirConfirmacion(`¿Marcar como entregado el pedido #${p.idCorto || ''}?`))) return;
+
+            const ingresoHistoricoYaExiste = ingresosGlobales.some(ing =>
+                ing.pedidoId === idDoc ||
+                String(ing.detalle || '').includes(`Liquidación #${p.idCorto || idDoc}`)
+            );
+
+            try {
+                await runTransaction(db, async (tx) => {
+                    const pedidoRef = doc(db, 'pedidos', idDoc);
+                    const pedidoSnap = await tx.get(pedidoRef);
+                    if(!pedidoSnap.exists()) throw new Error('El pedido ya no existe.');
+
+                    const pedido = pedidoSnap.data();
+                    if(pedido.negocioId !== negocioIdActual) throw new Error('El pedido no pertenece a este negocio.');
+                    if(normalizarEstadoPedido(pedido) === 'cancelado') throw new Error('No se puede entregar un pedido cancelado.');
+
+                    const ingresoRef = doc(db, 'ingresos', `pedido_pago_${idDoc}`);
+                    const ingresoSnap = await tx.get(ingresoRef);
+
+                    if(!pedido.estadoPago && !ingresoSnap.exists() && !ingresoHistoricoYaExiste) {
+                        registrarIngresoPedidoTransaccion(tx, idDoc, pedido, 'pago_auto');
+                    }
+
+                    tx.update(pedidoRef, {
+                        estadoEntrega: true,
+                        estadoPago: true,
+                        estadoPedido: 'entregado',
+                        updatedAt: serverTimestamp(),
+                        updatedBy: actorActual()
+                    });
+
+                    const ar = doc(collection(db, 'auditoria'));
+                    tx.set(ar, {
+                        negocioId: negocioIdActual,
+                        accion: 'pedido_entregado',
+                        entidad: 'pedido',
+                        entidadId: idDoc,
+                        detalle: { codigo: pedido.idCorto || '' },
+                        actor: actorActual(),
+                        fecha: serverTimestamp()
+                    });
+                });
+
                 window.triggerPedidos();
-                
-                if (font) { 
-                    let numLimpio = font.replace(/[^0-9]/g, ''); 
-                    window.open(`https://wa.me/${numLimpio}?text=${encodeURIComponent("Gracias por comprar con nosotros, su pedido ha sido entregado.")}`, '_blank'); 
+                window.triggerIngresos();
+
+                if (font) {
+                    const numLimpio = String(font || '').replace(/[^0-9]/g, '');
+                    if(numLimpio) {
+                        window.open(`https://wa.me/${numLimpio}?text=${encodeURIComponent("Gracias por comprar con nosotros, su pedido ha sido entregado.")}`, '_blank');
+                    }
                 }
+            } catch(e) {
+                console.error(e);
+                window.mostrarAlertaUI(e.message || 'No se pudo marcar el pedido como entregado.');
             }
         };
 
         window.cancelarPedido = async (idDoc, font) => {
-            if(!(await pedirConfirmacion("¿Cancelar este pedido y reponer el stock?"))) return;
-            const p = pedidosGlobales.find(x => x.idDoc === idDoc); if(!p) return;
-            
-            if (p.stockDescontado !== false) {
-                for (const item of p.items) {
-                    if(!item.isPack) { 
-                        if(item.idProd && item.idVar) { 
-                            const prod = productos.find(x => x.id === item.idProd); 
-                            if(prod && prod.variantes && prod.variantes[item.idVar]) { 
-                                prod.variantes[item.idVar].stock += item.cantidad; 
-                                registrarFechaStock(prod, item.idVar, `Cancelación pedido #${p.idCorto || ''}`);
-                                await setDoc(doc(db, "productos", prod.id), prod); 
-                            } 
-                        } 
-                    } else { 
-                        const pk = packs.find(x => x.id === item.idProd.replace('pack_','')); 
-                        if(pk) { 
-                            for (const comp of pk.items) { 
-                                const prod = productos.find(x => x.id === comp.idProd); 
-                                if(prod && prod.variantes && prod.variantes[comp.idVar]) { 
-                                    prod.variantes[comp.idVar].stock += (comp.cantidad * item.cantidad); 
-                                    registrarFechaStock(prod, comp.idVar, `Cancelación pack pedido #${p.idCorto || ''}`);
-                                    await setDoc(doc(db, "productos", prod.id), prod); 
-                                }
-                            } 
-                        } 
+            if(!(await pedirConfirmacion("¿Cancelar este pedido y reponer el stock si corresponde?"))) return;
+
+            try {
+                await runTransaction(db, async (tx) => {
+                    const pedidoRef = doc(db, 'pedidos', idDoc);
+                    const pedidoSnap = await tx.get(pedidoRef);
+                    if(!pedidoSnap.exists()) throw new Error('El pedido ya no existe.');
+
+                    const pedido = pedidoSnap.data();
+                    if(pedido.negocioId !== negocioIdActual) throw new Error('El pedido no pertenece a este negocio.');
+                    if(normalizarEstadoPedido(pedido) === 'cancelado') return;
+
+                    let demandas = new Map();
+                    let registros = new Map();
+
+                    if(pedido.stockDescontado === true) {
+                        demandas = await construirDemandasDesdeItemsTransaccion(tx, pedido.items || []);
+                        registros = await leerProductosDemandadosTransaccion(tx, demandas);
                     }
-                }
+
+                    if(pedido.stockDescontado === true && demandas.size) {
+                        validarYAplicarDemandasTransaccion(
+                            tx,
+                            demandas,
+                            registros,
+                            1,
+                            `Cancelación pedido #${pedido.idCorto || idDoc}`
+                        );
+                    }
+
+                    tx.update(pedidoRef, {
+                        estadoPedido: 'cancelado',
+                        estadoEntrega: true,
+                        stockDescontado: false,
+                        updatedAt: serverTimestamp(),
+                        updatedBy: actorActual()
+                    });
+
+                    const ar = doc(collection(db, 'auditoria'));
+                    tx.set(ar, {
+                        negocioId: negocioIdActual,
+                        accion: 'pedido_cancelado',
+                        entidad: 'pedido',
+                        entidadId: idDoc,
+                        detalle: {
+                            codigo: pedido.idCorto || '',
+                            stockRepuesto: pedido.stockDescontado === true
+                        },
+                        actor: actorActual(),
+                        fecha: serverTimestamp()
+                    });
+                });
+
+                window.triggerProductos();
+                window.triggerPedidos();
+            } catch(e) {
+                console.error(e);
+                window.mostrarAlertaUI(e.message || 'No se pudo cancelar el pedido.');
             }
-            
-            await updateDoc(doc(db, "pedidos", idDoc), { estadoPedido: 'cancelado', estadoEntrega: true, stockDescontado: false });
-            p.estadoPedido = 'cancelado'; p.estadoEntrega = true; p.stockDescontado = false;
-            window.triggerProductos(); window.triggerPedidos(); 
         };
         window.triggerPedidos = () => { window.renderizarPedidos(); limpiarControlesEstadoPedido(); window.actualizarNotificaciones(); if(!document.getElementById('panel-metricas').classList.contains('hidden')) window.actualizarGraficos(); };
 
