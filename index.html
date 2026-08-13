@@ -936,6 +936,8 @@
         let configTienda = { logo: '', telefono: '', horaApertura: '09:00', horaCierre: '18:00', diasApertura: { 'check-lu':true, 'check-ma':true, 'check-mi':true, 'check-ju':true, 'check-vi':true }, envioDisponible: false, envioPrecio: 0 };
         let metricasChart = null;
         const PAGE_SIZE = 100;
+        const SCHEMA_VERSION = 2;
+        const IDX_HELP = 'Si Firebase muestra un link para crear un índice compuesto, abrilo una vez desde la consola y esperá a que termine de construir.';
         let cursoresHistoricos = { pedidos:null, ingresos:null, gastos:null };
         let hayMasHistoricos = { pedidos:true, ingresos:true, gastos:true };
 
@@ -1397,8 +1399,10 @@
                         );
 
                         tx.update(pedidoRef, {
+                            schemaVersion: SCHEMA_VERSION,
                             stockDescontado: true,
                             estadoPedido: estado === 'confirmado' ? 'pendiente' : estado,
+                            estadoGeneral: estado === 'confirmado' ? 'pendiente' : estado,
                             alertaStock: '',
                             updatedAt: serverTimestamp(),
                             updatedBy: actorActual()
@@ -1422,8 +1426,10 @@
                         estadoFinal = { ok: false, errores };
 
                         tx.update(pedidoRef, {
+                            schemaVersion: SCHEMA_VERSION,
                             stockDescontado: false,
                             estadoPedido: 'stock_error',
+                            estadoGeneral: 'error_stock',
                             alertaStock: errores.join(' | '),
                             updatedAt: serverTimestamp(),
                             updatedBy: actorActual()
@@ -1457,7 +1463,8 @@
             const total = Number(pedido.total) || 0;
 
             tx.set(ingresoRef, {
-                fecha: new Date(),
+                schemaVersion: SCHEMA_VERSION,
+                fecha: serverTimestamp(),
                 tipo,
                 detalle: tipo === 'pago_auto'
                     ? `Liquidación #${pedido.idCorto || idDoc} Autocobro`
@@ -1762,6 +1769,14 @@
             });
         };
 
+        const manejarErrorListener = (nombre, error) => {
+            console.error(`Error listener ${nombre}:`, error);
+            const msg = String(error?.message || error || '');
+            if(msg.includes('index') || msg.includes('FAILED_PRECONDITION')) {
+                window.mostrarAlertaUI(`No se pudo cargar ${nombre}. ${IDX_HELP}`);
+            }
+        };
+
         const cargarDatosBD = async () => {
             if (!negocioIdActual) return;
 
@@ -1778,7 +1793,7 @@
                         if (confDoc.exists()) configTienda = confDoc.data();
                         window.triggerConfiguracion();
                     },
-                    (error) => console.error('Error listener configuración:', error)
+                    (error) => manejarErrorListener('configuración', error)
                 ));
 
                 // CATEGORÍAS EN TIEMPO REAL
@@ -1794,7 +1809,7 @@
                         window.actualizarSelectCategoriasModal();
                         window.actualizarSelectCategoriaSubcat();
                     },
-                    (error) => console.error('Error listener categorías:', error)
+                    (error) => manejarErrorListener('categorías', error)
                 ));
 
                 // PRODUCTOS EN TIEMPO REAL
@@ -1806,7 +1821,7 @@
                         window.triggerProductos();
                         window.actualizarNotificaciones();
                     },
-                    (error) => console.error('Error listener productos:', error)
+                    (error) => manejarErrorListener('productos', error)
                 ));
 
                 // PACKS EN TIEMPO REAL
@@ -1817,7 +1832,7 @@
                         packs = docsALista(snapshot, false);
                         window.triggerProductos();
                     },
-                    (error) => console.error('Error listener packs:', error)
+                    (error) => manejarErrorListener('packs', error)
                 ));
 
                 // INGRESOS EN TIEMPO REAL
@@ -1828,7 +1843,7 @@
                         ingresosGlobales = docsALista(snapshot, false); cursoresHistoricos.ingresos=snapshot.docs.at(-1)||null; hayMasHistoricos.ingresos=snapshot.size===PAGE_SIZE;
                         window.triggerIngresos();
                     },
-                    (error) => console.error('Error listener ingresos:', error)
+                    (error) => manejarErrorListener('ingresos', error)
                 ));
 
                 // GASTOS EN TIEMPO REAL
@@ -1839,7 +1854,7 @@
                         gastosGlobales = docsALista(snapshot, false); cursoresHistoricos.gastos=snapshot.docs.at(-1)||null; hayMasHistoricos.gastos=snapshot.size===PAGE_SIZE;
                         window.triggerGastos();
                     },
-                    (error) => console.error('Error listener gastos:', error)
+                    (error) => manejarErrorListener('gastos', error)
                 ));
 
                 // PEDIDOS EN TIEMPO REAL
@@ -1855,7 +1870,7 @@
 
                             if (p.estadoPedido === 'confirmado') {
                                 p.estadoPedido = 'pendiente';
-                                updateDoc(doc(db, 'pedidos', p.idDoc), { estadoPedido: 'pendiente' }).catch(console.error);
+                                updateDoc(doc(db, 'pedidos', p.idDoc), { schemaVersion: SCHEMA_VERSION, estadoPedido: 'pendiente', estadoGeneral: 'pendiente', updatedAt: serverTimestamp(), updatedBy: actorActual() }).catch(console.error);
                             }
 
                             // Descuento automático atómico.
@@ -1887,7 +1902,7 @@
                         window.triggerPedidos();
                         window.triggerProductos();
                     },
-                    (error) => console.error('Error listener pedidos:', error)
+                    (error) => manejarErrorListener('pedidos', error)
                 ));
 
                 window.actualizarSelectsClientes();
@@ -2136,7 +2151,7 @@
                         for(const k of ['precioOferta','fechaLimiteOferta','ultimaModificacionStock','motivoUltimaModificacionStock']) if(anterior?.[k]!=null) vars[vId][k]=anterior[k];
                     }
                     const pObj=id?{...productos.find(p=>p.id===id)}:{id:genIdDB(),createdAt:serverTimestamp(),createdBy:actorActual()};
-                    Object.assign(pObj,{nombre,categoria:categoriaProd,variantes:vars,negocioId:negocioIdActual,updatedAt:serverTimestamp(),updatedBy:actorActual()}); delete pObj.imagen;
+                    Object.assign(pObj,{schemaVersion:SCHEMA_VERSION,nombre,categoria:categoriaProd,variantes:vars,negocioId:negocioIdActual,updatedAt:serverTimestamp(),updatedBy:actorActual()}); delete pObj.imagen;
                     await setDoc(doc(db,'productos',pObj.id),pObj); await auditar(id?'producto_actualizado':'producto_creado','producto',pObj.id,{nombre,categoria:categoriaProd,variantes:Object.keys(vars).length});
                     window.cerrarModal();
                 } catch(e){ window.mostrarAlertaUI(e.message||'No se pudo guardar el producto.'); throw e; }
@@ -2165,7 +2180,7 @@
                         data.variantes[vId].stock=(Number(data.variantes[vId].stock)||0)+cant; data.variantes[vId].ultimaModificacionStock=new Date().toISOString(); data.variantes[vId].motivoUltimaModificacionStock='Reposición de inventario'; data.updatedAt=serverTimestamp();data.updatedBy=actorActual(); tx.set(r,data);
                         tx.set(doc(collection(db,'auditoria')),{negocioId:negocioIdActual,accion:'stock_repuesto',entidad:'producto',entidadId:id,detalle:{variante:vId,cantidad:cant,costo},actor:actorActual(),fecha:serverTimestamp()});
                     });
-                    if(costo>0) await addDoc(collection(db,'gastos'),{fecha:serverTimestamp(),titulo:'Ingreso Mercadería',descripcion:`Reposición ${id}/${vId} x${cant}`,importe:costo,negocioId:negocioIdActual,createdBy:actorActual()});
+                    if(costo>0) await addDoc(collection(db,'gastos'),{schemaVersion:SCHEMA_VERSION,fecha:serverTimestamp(),titulo:'Ingreso Mercadería',descripcion:`Reposición ${id}/${vId} x${cant}`,importe:costo,negocioId:negocioIdActual,createdAt:serverTimestamp(),createdBy:actorActual()});
                     window.cerrarModalStock();
                 }catch(e){window.mostrarAlertaUI(e.message||'No se pudo actualizar el stock.');throw e;}
             });
@@ -2214,6 +2229,7 @@
                     if(itemsCombo.length === 0) throw new Error('Seleccioná componentes válidos para el pack.');
 
                     const pkObj = {
+                        schemaVersion: SCHEMA_VERSION,
                         id: genIdDB(),
                         nombre,
                         imagen,
@@ -2349,15 +2365,15 @@
             const clienteName = selCliente.options[selCliente.selectedIndex].text.split(' (')[0];
             const resultado = await window.descontarStockItems(carritoMostrador, 'Venta de mostrador');
             if(!resultado.ok) { alert('No se pudo descontar stock:\n\n' + resultado.errores.join('\n')); return; }
-            let iM = { fecha: new Date(), tipo: 'venta_mostrador', detalle: `Venta Mostrador [${clienteName}] (${countItems} items)`, efectivo: efe, transferencia: trans, itemsCount: countItems, negocioId: negocioIdActual };
+            let iM = { schemaVersion: SCHEMA_VERSION, fecha: serverTimestamp(), tipo: 'venta_mostrador', detalle: `Venta Mostrador [${clienteName}] (${countItems} items)`, efectivo: efe, transferencia: trans, itemsCount: countItems, negocioId: negocioIdActual, createdAt: serverTimestamp(), createdBy: actorActual() };
             await addDoc(collection(db, "ingresos"), iM);
             carritoMostrador = []; window.renderizarCarritoMostrador(); document.getElementById('mostrador-efectivo').value = ''; document.getElementById('mostrador-transf').value = '';
             await auditar('venta_mostrador_registrada','venta','mostrador',{items:countItems,total:totalFinal,efectivo:efe,transferencia:trans}); window.triggerProductos(); window.triggerIngresos(); window.mostrarAlertaUI('Venta registrada y stock descontado.');
             });
         };
 
-        window.registrarIngresoManual = async () => { const d = document.getElementById('ingreso-manual-detalle').value; const e = parseFloat(document.getElementById('ingreso-manual-efectivo').value) || 0; const t = parseFloat(document.getElementById('ingreso-manual-transf').value) || 0; if (d && (e>0 || t>0)) { let i = { fecha: new Date(), tipo: 'manual', detalle: d, efectivo: e, transferencia: t, negocioId: negocioIdActual }; await addDoc(collection(db, "ingresos"), i); document.getElementById('ingreso-manual-detalle').value = ""; document.getElementById('ingreso-manual-efectivo').value = ""; document.getElementById('ingreso-manual-transf').value = ""; window.triggerIngresos(); } };
-        window.registrarGasto = async () => { const t = document.getElementById('gasto-titulo').value; const i = parseFloat(document.getElementById('gasto-importe').value) || 0; if (t && i > 0) { if(i >= 50000 && !(await pedirConfirmacion(`Vas a registrar un egreso de $${window.formatearNum(i)}. ¿Confirmar?`))) return; let g = { fecha: new Date(), titulo: t, importe: i, negocioId: negocioIdActual }; await addDoc(collection(db, "gastos"), g); document.getElementById('gasto-titulo').value = ""; document.getElementById('gasto-importe').value = ""; window.triggerGastos(); } };
+        window.registrarIngresoManual = async () => { const btn=document.activeElement?.tagName==='BUTTON'?document.activeElement:null; return conEstadoBoton(btn,'Registrando ingreso…',async()=>{ const d = validarTexto(document.getElementById('ingreso-manual-detalle').value, 'Concepto', 160, true); const e = parseFloat(document.getElementById('ingreso-manual-efectivo').value) || 0; const t = parseFloat(document.getElementById('ingreso-manual-transf').value) || 0; if (d && (e>0 || t>0)) { let i = { schemaVersion: SCHEMA_VERSION, fecha: serverTimestamp(), tipo: 'manual', detalle: d, efectivo: e, transferencia: t, negocioId: negocioIdActual, createdAt: serverTimestamp(), createdBy: actorActual() }; await addDoc(collection(db, "ingresos"), i); document.getElementById('ingreso-manual-detalle').value = ""; document.getElementById('ingreso-manual-efectivo').value = ""; document.getElementById('ingreso-manual-transf').value = ""; window.triggerIngresos(); } }); };
+        window.registrarGasto = async () => { const btn=document.activeElement?.tagName==='BUTTON'?document.activeElement:null; return conEstadoBoton(btn,'Registrando egreso…',async()=>{ const t = validarTexto(document.getElementById('gasto-titulo').value, 'Concepto', 160, true); const i = parseFloat(document.getElementById('gasto-importe').value) || 0; if (t && i > 0) { if(i >= 50000 && !(await pedirConfirmacion(`Vas a registrar un egreso de $${window.formatearNum(i)}. ¿Confirmar?`))) return; let g = { schemaVersion: SCHEMA_VERSION, fecha: serverTimestamp(), titulo: t, importe: i, negocioId: negocioIdActual, createdAt: serverTimestamp(), createdBy: actorActual() }; await addDoc(collection(db, "gastos"), g); document.getElementById('gasto-titulo').value = ""; document.getElementById('gasto-importe').value = ""; window.triggerGastos(); } }); };
         window.borrarGasto = async (id) => { if(!(await pedirConfirmacion("¿Eliminar este egreso?"))) return; await deleteDoc(doc(db, "gastos", id)); gastosGlobales = gastosGlobales.filter(g => g.id !== id); window.triggerGastos(); };
         window.calcularBalanceEnVivo = () => {
             const p = document.getElementById('filtro-periodo').value; const hoy = new Date(); let dias = p==='hoy'?1:p==='semana'?7:p==='mes'?30:99999; let tIng = 0; let tGas = 0;
@@ -2416,15 +2432,16 @@
             const pasaFiltros = (p) => {
                 const est = normalizarEstadoPedido(p);
                 const txt = `${obtenerNombreClientePedido(p)} ${p.telefono || ''} ${p.idCorto || ''}`.toLowerCase();
-                if(desde && p.fecha < desde) return false;
-                if(hasta && p.fecha > hasta) return false;
+                if(desde && (!(p.fecha instanceof Date) || p.fecha < desde)) return false;
+                if(hasta && (!(p.fecha instanceof Date) || p.fecha > hasta)) return false;
                 if(clienteTxt && !txt.includes(clienteTxt)) return false;
                 if(pagoFiltro && p.metodoPago !== pagoFiltro) return false;
                 if(entregaFiltro && p.metodoEntrega !== entregaFiltro) return false;
                 return true;
             };
-            const listaCompleta = pedidosGlobales.slice().sort((a,b) => b.fecha - a.fecha);
-            const pend = listaCompleta.filter(p => !p.estadoEntrega && normalizarEstadoPedido(p) !== 'cancelado');
+            const fechaMs = (p) => p.fecha instanceof Date ? p.fecha.getTime() : 0;
+            const listaCompleta = pedidosGlobales.slice().sort((a,b) => fechaMs(b) - fechaMs(a));
+            const pend = listaCompleta.filter(p => !p.estadoEntrega && normalizarEstadoPedido(p) !== 'cancelado' && pasaFiltros(p));
             const entr = listaCompleta.filter(p => (p.estadoEntrega || normalizarEstadoPedido(p) === 'cancelado') && pasaFiltros(p));
             const card = (p, isP) => {
                 let it = ''; (p.items || []).forEach(i => it += `<li>${i.nombre} - ${i.detalle} x${i.cantidad} - $${window.formatearNum((i.precio || 0) * (i.cantidad || 1))}</li>`);
@@ -2448,8 +2465,10 @@
             if (estado === 'confirmado') estado = 'pendiente';
             const p = pedidosGlobales.find(x => x.idDoc === idDoc); if(!p) return;
             if(estado === 'cancelado') { window.cancelarPedido(idDoc, p.telefono || ''); return; }
-            await updateDoc(doc(db, 'pedidos', idDoc), { estadoPedido: estado, updatedAt: serverTimestamp(), updatedBy: actorActual() }); await auditar('pedido_estado_actualizado','pedido',idDoc,{estado});
+            const estadoGeneral = estado === 'cancelado' ? 'cancelado' : (estado === 'stock_error' ? 'error_stock' : estado);
+            await updateDoc(doc(db, 'pedidos', idDoc), { schemaVersion: SCHEMA_VERSION, estadoPedido: estado, estadoGeneral, updatedAt: serverTimestamp(), updatedBy: actorActual() }); await auditar('pedido_estado_actualizado','pedido',idDoc,{estado});
             p.estadoPedido = estado;
+            p.estadoGeneral = estadoGeneral;
             window.triggerPedidos();
         };
         
@@ -2481,7 +2500,9 @@
                         if(!ingresoSnap.exists() && !ingresoHistoricoYaExiste) registrarIngresoPedidoTransaccion(tx, idDoc, pedido, 'pago');
 
                         tx.update(pedidoRef, {
+                            schemaVersion: SCHEMA_VERSION,
                             estadoPago: true,
+                            estadoGeneral: pedido.estadoEntrega ? 'entregado' : 'pagado',
                             updatedAt: serverTimestamp(),
                             updatedBy: actorActual()
                         });
@@ -2527,6 +2548,7 @@
                     const pedido = pedidoSnap.data();
                     if(pedido.negocioId !== negocioIdActual) throw new Error('El pedido no pertenece a este negocio.');
                     if(normalizarEstadoPedido(pedido) === 'cancelado') throw new Error('No se puede entregar un pedido cancelado.');
+                    if(pedido.estadoEntrega === true) return;
 
                     const ingresoRef = doc(db, 'ingresos', `pedido_pago_${idDoc}`);
                     const ingresoSnap = await tx.get(ingresoRef);
@@ -2536,9 +2558,11 @@
                     }
 
                     tx.update(pedidoRef, {
+                        schemaVersion: SCHEMA_VERSION,
                         estadoEntrega: true,
                         estadoPago: true,
                         estadoPedido: 'entregado',
+                        estadoGeneral: 'entregado',
                         updatedAt: serverTimestamp(),
                         updatedBy: actorActual()
                     });
@@ -2602,7 +2626,9 @@
                     }
 
                     tx.update(pedidoRef, {
+                        schemaVersion: SCHEMA_VERSION,
                         estadoPedido: 'cancelado',
+                        estadoGeneral: 'cancelado',
                         estadoEntrega: true,
                         stockDescontado: false,
                         updatedAt: serverTimestamp(),
