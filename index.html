@@ -565,6 +565,59 @@
             table { min-width: 660px; font-size: 0.82rem; }
         }
 
+
+
+        /* ===== CONFIGURACIÓN DE TIENDA / APARIENCIA ===== */
+        .store-settings-section { max-width: 1180px; }
+        .store-settings-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:14px; }
+        .store-settings-heading h4 { margin:0 0 5px; color:var(--text-main); font-size:.92rem; font-weight:500 !important; letter-spacing:.2px; text-transform:none; }
+        .store-settings-heading p { margin:0; max-width:760px; color:var(--text-muted); font-size:.78rem; line-height:1.5; }
+        .store-settings-divider { height:1px; background:var(--border-light); margin:26px 0; }
+
+        .config-tienda-link { display:grid; grid-template-columns:minmax(0, 1fr) auto auto; gap:8px; align-items:center; }
+        .config-tienda-link input { min-width:0; height:42px; background:var(--bg-color); border-radius:8px; padding:0 12px; color:var(--text-muted); }
+        .config-tienda-link button { min-height:42px; border-radius:8px; white-space:nowrap; }
+
+        .theme-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
+        .theme-color-field { display:grid; grid-template-columns:48px minmax(0, 1fr); gap:12px; align-items:center; min-height:84px; padding:12px; border:1px solid var(--border-light); border-radius:10px; background:var(--card-bg); transition:border-color .2s ease, box-shadow .2s ease, transform .2s ease; }
+        .theme-color-field:hover { border-color:var(--border); box-shadow:0 5px 16px rgba(0,0,0,.035); transform:translateY(-1px); }
+        .theme-color-field input[type="color"] { width:48px !important; height:48px !important; min-width:48px; padding:3px !important; border:1px solid var(--border) !important; border-radius:9px !important; background:var(--card-bg) !important; cursor:pointer; overflow:hidden; }
+        .theme-color-field input[type="color"]::-webkit-color-swatch-wrapper { padding:0; }
+        .theme-color-field input[type="color"]::-webkit-color-swatch { border:0; border-radius:6px; }
+        .theme-color-field input[type="color"]::-moz-color-swatch { border:0; border-radius:6px; }
+        .theme-color-meta { min-width:0; }
+        .theme-color-meta label { display:block; margin:0 0 3px; color:var(--text-main); font-size:.8rem; font-weight:500 !important; letter-spacing:.1px; text-transform:none; cursor:pointer; }
+        .theme-color-meta p { margin:0 0 5px; color:var(--text-muted); font-size:.69rem; line-height:1.35; }
+        .theme-color-meta span { display:inline-block; color:var(--text-dark); font-size:.66rem; letter-spacing:.5px; font-variant-numeric:tabular-nums; text-transform:uppercase; }
+
+        .theme-preview-wrap { margin-top:20px; padding-top:18px; border-top:1px solid var(--border-light); }
+        .theme-preview-title { margin-bottom:9px; color:var(--text-muted); font-size:.7rem; letter-spacing:.8px; text-transform:uppercase; }
+        .theme-preview { padding:18px; border:1px solid var(--border-light); border-radius:12px; background:var(--bg-color); }
+        .theme-preview-card { width:min(100%, 420px); padding:18px; border:1px solid var(--border); border-radius:10px; background:var(--card-bg); box-shadow:0 5px 18px rgba(0,0,0,.035); }
+        .theme-preview-card .theme-preview-eyebrow { display:block; margin-bottom:7px; color:var(--accent); font-size:.63rem; letter-spacing:1px; text-transform:uppercase; }
+        .theme-preview-card h5 { margin:0 0 7px; color:var(--primary); font-size:.95rem; font-weight:500 !important; }
+        .theme-preview-card p { margin:0 0 14px; color:var(--text-muted); font-size:.75rem; line-height:1.45; }
+        .theme-preview-actions { display:flex; gap:8px; flex-wrap:wrap; }
+        .theme-preview-actions button { min-height:36px; padding:8px 12px; border-radius:7px; font-size:.68rem; }
+        .theme-preview-actions .preview-secondary { background:transparent; border:1px solid var(--border); color:var(--text-main); }
+
+        .theme-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; padding-top:16px; border-top:1px solid var(--border-light); }
+        .theme-actions button { min-height:40px; border-radius:8px; }
+
+        @media (max-width: 900px) {
+            .theme-grid { grid-template-columns:1fr; }
+        }
+        @media (max-width: 600px) {
+            .config-tienda-link { grid-template-columns:1fr 1fr; }
+            .config-tienda-link input { grid-column:1 / -1; }
+            .config-tienda-link button { width:100%; }
+            .theme-color-field { grid-template-columns:44px minmax(0, 1fr); min-height:78px; padding:10px; }
+            .theme-color-field input[type="color"] { width:44px !important; height:44px !important; min-width:44px; }
+            .theme-actions { display:grid; grid-template-columns:1fr; }
+            .theme-actions button { width:100%; }
+            .theme-preview { padding:12px; }
+        }
+
 </style>
 </head>
 <body>
@@ -785,45 +838,96 @@
                         <span>Tienda</span><span>⌄</span>
                     </div>
                     <div id="body-config-tienda" class="modulo-body hidden">
-                        <h4 style="margin:0 0 8px; color:var(--primary); font-size:.85rem; text-transform:uppercase;">Enlace público</h4>
-                        <p style="margin:0 0 12px; font-size:.78rem; color:var(--text-muted); line-height:1.5;">Este enlace abre la tienda vinculada al negocio actual.</p>
-                        <div class="config-tienda-link">
-                            <input type="text" id="conf-tienda-link" readonly aria-label="Enlace público de la tienda">
-                            <button type="button" class="secondary" onclick="window.copiarLinkTienda()">Copiar enlace</button>
-                            <button type="button" onclick="window.abrirTiendaPublica()">Abrir tienda</button>
-                        </div>
-
-                        <h4 style="margin:0 0 8px; color:var(--primary); font-size:.85rem; text-transform:uppercase;">Apariencia</h4>
-                        <p style="margin:0 0 16px; font-size:.78rem; color:var(--text-muted); line-height:1.5;">Los cambios se previsualizan en este panel. Se aplican a la tienda pública cuando presionás Guardar apariencia.</p>
-
-                        <div class="theme-grid">
-                            <div class="theme-color-field"><input type="color" id="theme-primary" oninput="window.previsualizarTemaTienda()"><div class="theme-color-meta"><label>Color principal</label><span id="theme-primary-value"></span></div></div>
-                            <div class="theme-color-field"><input type="color" id="theme-primary-hover" oninput="window.previsualizarTemaTienda()"><div class="theme-color-meta"><label>Principal al pasar el mouse</label><span id="theme-primary-hover-value"></span></div></div>
-                            <div class="theme-color-field"><input type="color" id="theme-accent" oninput="window.previsualizarTemaTienda()"><div class="theme-color-meta"><label>Color de acento</label><span id="theme-accent-value"></span></div></div>
-                            <div class="theme-color-field"><input type="color" id="theme-bg" oninput="window.previsualizarTemaTienda()"><div class="theme-color-meta"><label>Fondo general</label><span id="theme-bg-value"></span></div></div>
-                            <div class="theme-color-field"><input type="color" id="theme-card" oninput="window.previsualizarTemaTienda()"><div class="theme-color-meta"><label>Fondo de tarjetas</label><span id="theme-card-value"></span></div></div>
-                            <div class="theme-color-field"><input type="color" id="theme-card-hover" oninput="window.previsualizarTemaTienda()"><div class="theme-color-meta"><label>Tarjeta al pasar el mouse</label><span id="theme-card-hover-value"></span></div></div>
-                            <div class="theme-color-field"><input type="color" id="theme-border" oninput="window.previsualizarTemaTienda()"><div class="theme-color-meta"><label>Bordes</label><span id="theme-border-value"></span></div></div>
-                            <div class="theme-color-field"><input type="color" id="theme-border-light" oninput="window.previsualizarTemaTienda()"><div class="theme-color-meta"><label>Bordes suaves</label><span id="theme-border-light-value"></span></div></div>
-                            <div class="theme-color-field"><input type="color" id="theme-text-main" oninput="window.previsualizarTemaTienda()"><div class="theme-color-meta"><label>Texto principal</label><span id="theme-text-main-value"></span></div></div>
-                            <div class="theme-color-field"><input type="color" id="theme-text-muted" oninput="window.previsualizarTemaTienda()"><div class="theme-color-meta"><label>Texto secundario</label><span id="theme-text-muted-value"></span></div></div>
-                            <div class="theme-color-field"><input type="color" id="theme-text-dark" oninput="window.previsualizarTemaTienda()"><div class="theme-color-meta"><label>Texto desactivado</label><span id="theme-text-dark-value"></span></div></div>
-                        </div>
-
-                        <div id="theme-preview" class="theme-preview">
-                            <div id="theme-preview-card" class="theme-preview-card">
-                                <h5>Producto de ejemplo</h5>
-                                <p>Vista previa de los colores seleccionados para la tienda.</p>
-                                <div class="theme-preview-actions">
-                                    <button type="button" id="theme-preview-primary">Agregar al carrito</button>
-                                    <button type="button" class="preview-secondary" id="theme-preview-secondary">Ver detalle</button>
+                        <div class="store-settings-section">
+                            <div class="store-settings-heading">
+                                <div>
+                                    <h4>Enlace público</h4>
+                                    <p>Dirección directa de la tienda asociada a este negocio.</p>
                                 </div>
+                            </div>
+                            <div class="config-tienda-link">
+                                <input type="text" id="conf-tienda-link" readonly aria-label="Enlace público de la tienda">
+                                <button type="button" class="secondary" onclick="window.copiarLinkTienda()">Copiar</button>
+                                <button type="button" onclick="window.abrirTiendaPublica()">Abrir tienda</button>
                             </div>
                         </div>
 
-                        <div class="modal-actions" style="margin-top:20px;">
-                            <button type="button" class="secondary" onclick="window.restaurarTemaPredeterminado()">Restaurar colores originales</button>
-                            <button type="button" onclick="window.guardarAparienciaTienda()">Guardar apariencia</button>
+                        <div class="store-settings-divider"></div>
+
+                        <div class="store-settings-section">
+                            <div class="store-settings-heading">
+                                <div>
+                                    <h4>Apariencia</h4>
+                                    <p>Personalizá la identidad visual de la tienda. El cuadrado muestra el color actualmente seleccionado.</p>
+                                </div>
+                            </div>
+
+                            <div class="theme-grid">
+                                <div class="theme-color-field">
+                                    <input type="color" id="theme-primary" aria-label="Color principal" oninput="window.previsualizarTemaTienda()">
+                                    <div class="theme-color-meta"><label for="theme-primary">Color principal</label><p>Botones principales, categorías activas y elementos destacados.</p><span id="theme-primary-value"></span></div>
+                                </div>
+                                <div class="theme-color-field">
+                                    <input type="color" id="theme-primary-hover" aria-label="Color principal al pasar el mouse" oninput="window.previsualizarTemaTienda()">
+                                    <div class="theme-color-meta"><label for="theme-primary-hover">Principal al pasar el mouse</label><p>Estado de los botones principales cuando el cursor pasa por encima.</p><span id="theme-primary-hover-value"></span></div>
+                                </div>
+                                <div class="theme-color-field">
+                                    <input type="color" id="theme-accent" aria-label="Color de acento" oninput="window.previsualizarTemaTienda()">
+                                    <div class="theme-color-meta"><label for="theme-accent">Color de acento</label><p>Títulos, detalles secundarios y elementos que acompañan al color principal.</p><span id="theme-accent-value"></span></div>
+                                </div>
+                                <div class="theme-color-field">
+                                    <input type="color" id="theme-bg" aria-label="Fondo general" oninput="window.previsualizarTemaTienda()">
+                                    <div class="theme-color-meta"><label for="theme-bg">Fondo general</label><p>Color de fondo de toda la página de la tienda.</p><span id="theme-bg-value"></span></div>
+                                </div>
+                                <div class="theme-color-field">
+                                    <input type="color" id="theme-card" aria-label="Fondo de tarjetas" oninput="window.previsualizarTemaTienda()">
+                                    <div class="theme-color-meta"><label for="theme-card">Fondo de tarjetas</label><p>Tarjetas de productos, buscador, modales y superficies principales.</p><span id="theme-card-value"></span></div>
+                                </div>
+                                <div class="theme-color-field">
+                                    <input type="color" id="theme-card-hover" aria-label="Tarjeta al pasar el mouse" oninput="window.previsualizarTemaTienda()">
+                                    <div class="theme-color-meta"><label for="theme-card-hover">Tarjeta al pasar el mouse</label><p>Fondo sutil usado al interactuar con tarjetas y controles.</p><span id="theme-card-hover-value"></span></div>
+                                </div>
+                                <div class="theme-color-field">
+                                    <input type="color" id="theme-border" aria-label="Bordes" oninput="window.previsualizarTemaTienda()">
+                                    <div class="theme-color-meta"><label for="theme-border">Bordes</label><p>Contorno de tarjetas, campos, botones secundarios y separadores.</p><span id="theme-border-value"></span></div>
+                                </div>
+                                <div class="theme-color-field">
+                                    <input type="color" id="theme-border-light" aria-label="Bordes suaves" oninput="window.previsualizarTemaTienda()">
+                                    <div class="theme-color-meta"><label for="theme-border-light">Bordes suaves</label><p>Divisiones internas y líneas visuales de menor jerarquía.</p><span id="theme-border-light-value"></span></div>
+                                </div>
+                                <div class="theme-color-field">
+                                    <input type="color" id="theme-text-main" aria-label="Texto principal" oninput="window.previsualizarTemaTienda()">
+                                    <div class="theme-color-meta"><label for="theme-text-main">Texto principal</label><p>Nombres de productos, precios y contenido de mayor importancia.</p><span id="theme-text-main-value"></span></div>
+                                </div>
+                                <div class="theme-color-field">
+                                    <input type="color" id="theme-text-muted" aria-label="Texto secundario" oninput="window.previsualizarTemaTienda()">
+                                    <div class="theme-color-meta"><label for="theme-text-muted">Texto secundario</label><p>Descripciones, información auxiliar, etiquetas y textos menos destacados.</p><span id="theme-text-muted-value"></span></div>
+                                </div>
+                                <div class="theme-color-field">
+                                    <input type="color" id="theme-text-dark" aria-label="Texto desactivado" oninput="window.previsualizarTemaTienda()">
+                                    <div class="theme-color-meta"><label for="theme-text-dark">Texto desactivado</label><p>Estados inactivos, información tenue y controles no disponibles.</p><span id="theme-text-dark-value"></span></div>
+                                </div>
+                            </div>
+
+                            <div class="theme-preview-wrap">
+                                <div class="theme-preview-title">Vista previa</div>
+                                <div id="theme-preview" class="theme-preview">
+                                    <div id="theme-preview-card" class="theme-preview-card">
+                                        <span class="theme-preview-eyebrow">Producto</span>
+                                        <h5>Producto de ejemplo</h5>
+                                        <p>Así se combinan los colores principales dentro de una tarjeta de la tienda.</p>
+                                        <div class="theme-preview-actions">
+                                            <button type="button" id="theme-preview-primary">Agregar al carrito</button>
+                                            <button type="button" class="preview-secondary" id="theme-preview-secondary">Ver detalle</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="theme-actions">
+                                <button type="button" class="secondary" onclick="window.restaurarTemaPredeterminado()">Restaurar originales</button>
+                                <button type="button" onclick="window.guardarAparienciaTienda()">Guardar apariencia</button>
+                            </div>
                         </div>
                     </div>
                 </div>
