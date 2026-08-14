@@ -501,7 +501,37 @@
         let packs = []; 
         let carrito = []; 
         let terminoBusqueda = "";
-        let configTienda = { logo: '', telefono: '', horaApertura: '09:00', horaCierre: '18:00', diasApertura: { 'check-lu':true, 'check-ma':true, 'check-mi':true, 'check-ju':true, 'check-vi':true }, envioDisponible: false, envioPrecio: 0 };
+        const TEMA_TIENDA_PREDETERMINADO = Object.freeze({
+            primary:'#5d4037', primaryHover:'#4e342e', accent:'#8d6e63',
+            bg:'#f5f5f7', card:'#ffffff', cardHover:'#f9f9f9',
+            border:'#e0e0e0', borderLight:'#eeeeee',
+            textMain:'#212121', textMuted:'#616161', textDark:'#9e9e9e'
+        });
+        let configTienda = { logo: '', telefono: '', horaApertura: '09:00', horaCierre: '18:00', diasApertura: { 'check-lu':true, 'check-ma':true, 'check-mi':true, 'check-ju':true, 'check-vi':true }, envioDisponible: false, envioPrecio: 0, apariencia: { ...TEMA_TIENDA_PREDETERMINADO } };
+
+        const colorHexValido = (valor) => /^#[0-9a-fA-F]{6}$/.test(String(valor || ''));
+        const normalizarTemaTienda = (tema = {}) => {
+            const limpio = {};
+            for (const [clave, porDefecto] of Object.entries(TEMA_TIENDA_PREDETERMINADO)) {
+                limpio[clave] = colorHexValido(tema?.[clave]) ? tema[clave].toLowerCase() : porDefecto;
+            }
+            return limpio;
+        };
+        const aplicarTemaTienda = (tema = {}) => {
+            const t = normalizarTemaTienda(tema);
+            const root = document.documentElement.style;
+            root.setProperty('--primary', t.primary);
+            root.setProperty('--primary-hover', t.primaryHover);
+            root.setProperty('--accent', t.accent);
+            root.setProperty('--bg-color', t.bg);
+            root.setProperty('--card-bg', t.card);
+            root.setProperty('--card-hover', t.cardHover);
+            root.setProperty('--border', t.border);
+            root.setProperty('--border-light', t.borderLight);
+            root.setProperty('--text-main', t.textMain);
+            root.setProperty('--text-muted', t.textMuted);
+            root.setProperty('--text-dark', t.textDark);
+        };
         let ultimoPedidoConf = null; 
 
         window.formatearNum = (num) => new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 }).format(num);
@@ -675,7 +705,9 @@
                 // Configuración propia de la tienda
                 const confDoc = await getDoc(doc(db, "configuracion", negocioIdURL));
                 if(confDoc.exists()) {
-                    configTienda = confDoc.data();
+                    configTienda = { ...configTienda, ...confDoc.data() };
+                    configTienda.apariencia = normalizarTemaTienda(configTienda.apariencia || {});
+                    aplicarTemaTienda(configTienda.apariencia);
                 } else {
                     document.body.innerHTML = `
                         <div style="display:flex; flex-direction:column; justify-content:center; align-items:center; height:100vh; background:var(--bg-color); font-family:sans-serif; text-align: center; padding: 20px;">
